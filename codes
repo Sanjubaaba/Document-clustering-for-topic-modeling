@@ -1,0 +1,251 @@
+# -*- coding: utf-8 -*-
+"""
+Topic Modeling and Document Clustering for 20 Newsgroups Dataset
+Combines LDA, K-means, and visualization techniques for optimal analysis
+"""
+
+# Import all necessary libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from wordcloud import WordCloud
+import nltk
+import re
+from operator import itemgetter
+from sklearn.datasets import fetch_20newsgroups
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.decomposition import LatentDirichletAllocation, TruncatedSVD, PCA
+from sklearn.cluster import KMeans
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import Normalizer
+from sklearn import metrics
+from sklearn.manifold import TSNE
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
+import string
+
+# Download NLTK resources
+nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('punkt')
+
+# Set random seed for reproducibility
+np.random.seed(42)
+random_state = 42
+
+# ======================
+# DATA LOADING & PREP
+# ======================
+
+print("Loading 20 Newsgroups dataset...")
+# Load all categories
+newsgroups = fetch_20newsgroups(subset='all', 
+                              remove=('headers', 'footers', 'quotes'),
+                              shuffle=True, 
+                              random_state=random_state)
+
+# Create DataFrame
+data = pd.DataFrame({'text': newsgroups.data, 'target': newsgroups.target})
+target_names = newsgroups.target_names
+
+print(f"\nDataset loaded with {len(data)} documents across {len(target_names)} categories.")
+
+# ======================
+# TEXT PREPROCESSING
+# ======================
+
+print("\nPreprocessing text data...")
+# Initialize lemmatizer and stopwords
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
+punctuation = set(string.punctuation)
+
+def preprocess_text(text):
+    """Comprehensive text cleaning and normalization"""
+    # Convert to lowercase
+    text = text.lower()
+    # Remove numbers
+    text = re.sub(r'\d+', '', text)
+    # Remove URLs
+    text = re.sub(r'https?://\S+|www\.\S+', '', text)
+    # Remove punctuation
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    # Tokenize
+    tokens = word_tokenize(text)
+    # Remove stopwords and lemmatize
+    tokens = [lemmatizer.lemmatize(token) for token in tokens 
+              if token not in stop_words and len(token) > 2]
+    return ' '.join(tokens)
+
+# Apply preprocessing
+data['clean_text'] = data['text'].apply(preprocess_text)
+
+# ======================
+# FEATURE EXTRACTION
+# ======================
+
+print("\nCreating TF-IDF features...")
+# TF-IDF Vectorization with optimal parameters
+tfidf_vectorizer = TfidfVectorizer(
+    max_df=0.95,         # ignore terms that appear in >95% docs
+    min_df=2,            # ignore terms that appear in <2 docs
+    max_features=1000,   # limit vocabulary size
+    stop_words='english',
+    use_idf=True
+)
+
+X_tfidf = tfidf_vectorizer.fit_transform(data['clean_text'])
+print(f"TF-IDF matrix shape: {X_tfidf.shape}")
+
+# ======================
+# DIMENSIONALITY REDUCTION
+# ======================
+
+print("\nReducing dimensionality with SVD...")
+# Reduce to 300 dimensions (optimal for this dataset)
+svd = TruncatedSVD(300)
+normalizer = Normalizer(copy=False)
+pipeline = make_pipeline(svd, normalizer)
+
+X_reduced = pipeline.fit_transform(X_tfidf)
+print(f"Reduced matrix shape: {X_reduced.shape}")
+
+# ======================
+# K-MEANS CLUSTERING
+# ======================
+
+print("\nFinding optimal number of clusters...")
+# Find optimal k using V-measure
+v_measures = []
+k_range = range(2, 25)  # Test 2-24 clusters
+
+for k in k_range:
+    kmeans = KMeans(n_clusters=k, random_state=random_state)
+    kmeans.fit(X_reduced)
+    v_measure = metrics.v_measure_score(data['target'], kmeans.labels_)
+    v_measures.append((k, v_measure))
+    print(f"K={k}: V-measure = {v_measure:.3f}")
+
+# Select best k
+optimal_k, best_v = max(v_measures, key=itemgetter(1))
+print(f"\nOptimal number of clusters: {optimal_k} (V-measure: {best_v:.3f})")
+
+# Train final model with optimal k
+print("\nTraining final K-means model...")
+final_kmeans = KMeans(n_clusters=optimal_k, random_state=random_state)
+final_kmeans.fit(X_reduced)
+data['cluster'] = final_kmeans.labels_
+
+# Evaluate clustering
+homogeneity = metrics.homogeneity_score(data['target'], data['cluster'])
+completeness = metrics.completeness_score(data['target'], data['cluster'])
+v_measure = metrics.v_measure_score(data['target'], data['cluster'])
+
+print("\nClustering Evaluation:")
+print(f"Homogeneity: {homogeneity:.3f}")
+print(f"Completeness: {completeness:.3f}")
+print(f"V-measure: {v_measure:.3f}")
+
+# ======================
+# TOPIC MODELING (LDA)
+# ======================
+
+print("\nPerforming LDA topic modeling...")
+# Use CountVectorizer for LDA
+count_vectorizer = CountVectorizer(
+    max_df=0.95,
+    min_df=2,
+    stop_words='english',
+    max_features=1000
+)
+
+X_counts = count_vectorizer.fit_transform(data['clean_text'])
+
+# Train LDA model
+num_topics = 20  # Matches original number of categories
+lda = LatentDirichletAllocation(
+    n_components=num_topics,
+    max_iter=10,
+    learning_method='online',
+    random_state=random_state
+)
+
+lda.fit(X_counts)
+
+# ======================
+# VISUALIZATION
+# ======================
+
+print("\nGenerating visualizations...")
+
+# 1. Cluster Visualization (t-SNE)
+print("Creating t-SNE visualization...")
+tsne = TSNE(n_components=2, random_state=random_state)
+X_tsne = tsne.fit_transform(X_reduced)
+
+plt.figure(figsize=(12, 8))
+sns.scatterplot(
+    x=X_tsne[:, 0],
+    y=X_tsne[:, 1],
+    hue=data['cluster'],
+    palette='viridis',
+    alpha=0.6,
+    s=50
+)
+plt.title("Document Clusters (t-SNE projection)")
+plt.show()
+
+# 2. Word Clouds for each cluster
+print("Generating word clouds for each cluster...")
+for cluster_id in range(optimal_k):
+    cluster_text = " ".join(data[data['cluster'] == cluster_id]['clean_text'])
+    wordcloud = WordCloud(
+        width=800,
+        height=400,
+        background_color='white',
+        max_words=50
+    ).generate(cluster_text)
+    
+    plt.figure(figsize=(10, 5))
+    plt.imshow(wordcloud, interpolation='bilinear')
+    plt.axis('off')
+    plt.title(f"Cluster {cluster_id} Word Cloud")
+    plt.show()
+
+# 3. Display LDA topics
+def display_topics(model, feature_names, no_top_words):
+    """Display top words for each topic"""
+    for topic_idx, topic in enumerate(model.components_):
+        print(f"Topic #{topic_idx + 1}:")
+        print(", ".join([feature_names[i] for i in topic.argsort()[:-no_top_words - 1:-1]]))
+        print()
+
+print("\nTop words per LDA topic:")
+display_topics(lda, count_vectorizer.get_feature_names_out(), 15)
+
+# 4. Cluster vs Category Heatmap
+print("Creating cluster vs category heatmap...")
+cross_tab = pd.crosstab(data['cluster'], data['target'])
+cross_tab.columns = target_names
+
+plt.figure(figsize=(12, 8))
+sns.heatmap(cross_tab, cmap='Blues', annot=True, fmt='d')
+plt.title("Cluster vs True Category Distribution")
+plt.xlabel("True Category")
+plt.ylabel("Cluster")
+plt.show()
+
+# 5. Most discriminative words per cluster
+print("\nMost discriminative words per cluster:")
+unreduced_centroids = svd.inverse_transform(final_kmeans.cluster_centers_)
+order_centroids = unreduced_centroids.argsort()[:, ::-1]
+terms = tfidf_vectorizer.get_feature_names_out()
+
+for i in range(optimal_k):
+    print(f"\nCluster {i}:")
+    cluster_terms = ", ".join([terms[ind] for ind in order_centroids[i, :15]])
+    print(cluster_terms)
+
+print("\nAnalysis complete!")
