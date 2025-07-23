@@ -1,1 +1,3 @@
 # Document-clustering-for-topic-modeling
+
+Provided code performs topic modeling and document clustering on the 20 Newsgroups dataset using NLP techniques. First, it loads and preprocesses the text data by cleaning, tokenizing, and lemmatizing the documents. Then, it converts the text into numerical features using TF-IDF vectorization. The code applies Latent Dirichlet Allocation (LDA) to discover hidden topics in the documents, showing the most relevant words for each topic. It also uses K-means clustering to group similar documents together based on their TF-IDF vectors. The results are visualized using t-SNE for dimensionality reduction, word clouds for topic representation, and heatmaps to compare clusters with actual categories.
